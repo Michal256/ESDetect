@@ -1,0 +1,38 @@
+graph TD
+    subgraph Kernel [Linux Kernel Space]
+        Syscall[Syscall: execve / openat] -->|Trigger| Probe(BPF Probe: probe.c)
+        Probe -->|Capture PID, Comm, Filepath| RingBuf[(eBPF RingBuffer)]
+    end
+
+    subgraph Userspace [Userspace: bpf-detect]
+        Loader[bpf/loader.go] -->|Poll/Read| RingBuf
+        Loader -->|Callback| Main[main.go]
+        Main -->|ProcessEvent| Mapper[mapper/event_mapper.go]
+
+        subgraph Async [Async Processing]
+            Mapper -->|Push| Channel[Buffered Channel]
+            Channel -->|Consume| Workers[Worker Pool]
+        end
+        
+        subgraph Enrichment [Metadata Enrichment]
+            Workers -->|ResolveCgroupMetadata| Resolver[resolver/cgroup_resolver.go]
+            Resolver -->|Check| Cache{In Cache?}
+            Cache -- Yes --> ReturnMeta[Return Metadata]
+            Cache -- No --> FindPath[Find Cgroup Path /proc/pid/cgroup]
+            FindPath --> ExtractID[Extract Container ID]
+            ExtractID --> Provider[providers/runc.go]
+            
+            subgraph FS [Container Runtime FS]
+                Provider -->|Read| StateFile[state.json / config.json]
+            end
+            
+            StateFile -->|Return Pod/Image Info| Provider
+            Provider --> Resolver
+            Resolver -->|Update| Cache
+        end
+        
+        Workers -->|Filter| FilterCheck{Should Ignore?}
+        FilterCheck -- Yes (System/Ignored) --> Drop[Drop Event]
+        FilterCheck -- No --> Format[Format Output (JSON/Text)]
+        Format --> Write[Write to detect_&lt;image&gt;.log]
+    end

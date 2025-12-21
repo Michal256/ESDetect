@@ -1,0 +1,36 @@
+Step-by-Step Example: Resolving CGroup ID to Container Info
+
+Scenario:
+- A process (PID 100) is running inside a Docker container.
+- The BPF tool detects an event (e.g., file open) and reports:
+  "pid=100 cgroup_id=4026531840"
+
+Step 1: BPF Event Reception
+The Python script receives the line. It knows the numeric ID (4026531840) but doesn't know it's "Docker container X".
+
+Step 2: Look up Candidate Paths
+The script checks the process involved (PID 100).
+It reads the file: /proc/100/cgroup
+
+Content of /proc/100/cgroup:
+0::/docker/a1b2c3d4e5f6...
+
+The script extracts the path candidate: "/docker/a1b2c3d4e5f6..."
+
+Step 3: Verification (The "Compare" Step)
+The script constructs the full filesystem path to the cgroup:
+Path: /sys/fs/cgroup/docker/a1b2c3d4e5f6...
+
+It runs `os.stat()` on this path to get the inode number (st_ino).
+Result: st_ino = 4026531840
+
+Step 4: Match Confirmation
+The script compares the inode from disk (4026531840) with the ID from BPF (4026531840).
+They match!
+
+Step 5: Extraction
+Now that we are sure this path is correct, we parse the string "/docker/a1b2c3d4e5f6...".
+We extract the Container ID: "a1b2c3d4e5f6..."
+
+Step 6: Metadata Lookup
+We run `docker inspect a1b2c3d4e5f6...` to get the image name and container name.

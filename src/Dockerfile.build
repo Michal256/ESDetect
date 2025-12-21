@@ -1,0 +1,42 @@
+FROM golang:1.25.5-trixie
+
+# Install build dependencies for BPF
+# clang, llvm: for compiling C to BPF
+# bpftool: for generating vmlinux.h
+# libbpf-dev: BPF library headers
+# linux-headers-generic: Kernel headers
+RUN apt-get update && apt-get install -y \
+    clang \
+    llvm \
+    libbpf-dev \
+    linux-headers-generic \
+    bpftool \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy go mod files first for caching
+COPY go.mod ./
+# We can't run go mod tidy here effectively without the source code imports,
+# but we can pre-download dependencies if go.sum existed.
+# Since we are adding new deps, we'll do it in the next step.
+
+# Copy source code
+COPY . .
+
+# Fetch dependencies (including the new cilium/ebpf)
+RUN go mod tidy
+
+# We have removed the dependency on vmlinux.h in probe.c by defining structs manually.
+# So we don't need to install kernel images or extract BTF anymore.
+# This makes the build completely self-contained and faster.
+
+# Generate BPF artifacts (Go bindings)
+# We need to ensure the generated files are in the same package
+# We run with -x to see commands and ensure we catch errors
+# We target the file directly to ensure it's processed even if ignored by build
+RUN cd bpf && go generate -x -v gen.go && cd .. && ls -la bpf/
+
+# Build the Go binary
+RUN go build -o bpf-detect .

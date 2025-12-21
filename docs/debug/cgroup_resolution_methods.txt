@@ -1,0 +1,21 @@
+Comparison: /proc Scan vs. /sys/fs/cgroup Scan
+
+1. The Race Condition Problem (The Main Reason)
+   - Scenario: A short-lived process (e.g., `ls`, `curl`, or a build step) starts and exits in 5ms.
+   - BPF: Captures the event instantly and sends it to Python.
+   - Python: Receives the event 10ms later.
+   - /proc Scan: Tries to open `/proc/[pid]/cgroup`. Fails because the PID no longer exists. Result: UNKNOWN.
+   - /sys/fs/cgroup Scan: Looks for the directory `/sys/fs/cgroup/docker/[id]`. Even if the process is dead, the Docker container (and its cgroup directory) usually still exists. Result: SUCCESS.
+
+2. Performance (Big O Notation)
+   - /proc Scan: O(N) where N is the number of processes.
+     On a busy server, there might be 10,000+ processes. Reading 10,000 files is slow.
+   - /sys/fs/cgroup Scan: O(M) where M is the number of Cgroups (containers/slices).
+     There are usually far fewer cgroups than processes (e.g., 50 containers vs 1000 processes).
+
+3. Stability
+   - /proc relies on the specific PID being alive.
+   - /sys/fs/cgroup relies on the Cgroup (Container) being alive.
+
+Conclusion:
+Scanning /sys/fs/cgroup is preferred because it is faster and successfully resolves metadata for short-lived processes that vanish from /proc before they can be inspected.
