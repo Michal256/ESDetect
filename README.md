@@ -32,32 +32,32 @@ Here are 5 common ways to use `ESDetect`:
 **1. Standard Detection with JSON Output**
 Use this for integration with **ESVerdict** or other tools. JSON format is easier to parse programmatically.
 ```bash
-sudo ./src/bpf-detect -output-format json
+sudo ./bpf-detect -output-format json
 ```
 
 **2. Debugging Container Resolution**
 If you are not seeing events for your container, enable debug logging to see how cgroups are being resolved.
 ```bash
-sudo ./src/bpf-detect -debug
+sudo ./bpf-detect -debug
 ```
 
 **3. Monitoring Host Processes**
 By default, host events are ignored. Use this flag to capture file access events from processes running directly on the host.
 ```bash
-sudo ./src/bpf-detect -print-host-events
+sudo ./bpf-detect -print-host-events
 ```
 
 **4. Custom Output Directory**
 Store the generated log files in a specific directory (e.g., for a specific test run).
 ```bash
 mkdir -p ./test-results
-sudo ./src/bpf-detect -output-dir ./test-results
+sudo ./bpf-detect -output-dir ./test-results
 ```
 
 **5. Full Capture (Disable Filtering)**
 By default, system events (like Kubernetes system pods) are filtered out. Disable this to see all activity.
 ```bash
-sudo ./src/bpf-detect -filter-system-events=false
+sudo ./bpf-detect -filter-system-events=false
 ```
 
 
@@ -81,10 +81,10 @@ You can also run the tools manually for more control:
 
 ```bash
 # Native eBPF mode (Recommended)
-sudo ./src/bpf-detect [flags]
+sudo ./bpf-detect [flags]
 
 # Legacy mode (using bpftrace)
-sudo bpftrace trace.bt | sudo ./src/bpf-detect -use-bpftrace [flags]
+sudo bpftrace trace.bt | sudo ./bpf-detect -use-bpftrace [flags]
 ```
 
 **Arguments for `bpf-detect`:**
@@ -124,7 +124,7 @@ cd ..
 ### 2. Start ESDetect
 In a separate terminal, start the detection tool to listen for events:
 ```bash
-sudo ./src/bpf-detect
+sudo ./bpf-detect
 ```
 
 ### 3. Run Example Containers
