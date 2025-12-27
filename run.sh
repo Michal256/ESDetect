@@ -8,4 +8,4 @@ echo "Starting bpf-detect (Native Go + eBPF)..."
 #sudo bpftrace trace.bt | sudo ./src/bpf-detect -output-dir ./logs -print-host-events=false
 
 # New native execution
-sudo ./src/bpf-detect -output-dir ./logs -print-host-events=false -output-format json -workers 4 -buffer-size 10000
+sudo ./src/bpf-detect -output-dir ./logs -print-host-events=false -output-format json -workers 4 -buffer-size 10000 -debug=true

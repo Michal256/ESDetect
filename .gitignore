@@ -78,3 +78,5 @@ logs_old/
 bpf-detect
 src/bpf-detect
 src/out
+
+docs/debug/*

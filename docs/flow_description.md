@@ -9,6 +9,7 @@ The foundation of `ESDetect` lies in the Linux Kernel, where it employs **eBPF (
 *   **Trigger Mechanism**: The system attaches probes to specific system calls:
     *   `sys_execve`: Triggered whenever a new program is executed.
     *   `sys_openat`: Triggered whenever a file is opened.
+    *   `sys_readlink` / `sys_readlinkat`: Triggered whenever a symbolic link is read.
 *   **BPF Probes (`probe.c`)**: Custom C code is compiled into eBPF bytecode. These probes run safely within the kernel context.
 *   **Data Extraction**: When a probe triggers, it captures key context:
     *   **PID**: The Process ID.

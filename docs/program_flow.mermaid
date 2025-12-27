@@ -1,6 +1,6 @@
 graph TD
     subgraph Kernel [Linux Kernel Space]
-        Syscall[Syscall: execve / openat] -->|Trigger| Probe(BPF Probe: probe.c)
+        Syscall[Syscall: execve / openat / readlink] -->|Trigger| Probe(BPF Probe: probe.c)
         Probe -->|Capture PID, Comm, Filepath| RingBuf[(eBPF RingBuffer)]
     end
 

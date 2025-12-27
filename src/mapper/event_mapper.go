@@ -26,8 +26,10 @@ type Event struct {
 type EventMapper struct {
 	resolver  *resolver.CGroupResolver
 	writers   map[string]*os.File
+	writersMu sync.Mutex
 	eventChan chan Event
 	wg        sync.WaitGroup
+	selfPid   int
 }
 
 func NewEventMapper() *EventMapper {
@@ -35,6 +37,7 @@ func NewEventMapper() *EventMapper {
 		resolver:  resolver.NewCGroupResolver(),
 		writers:   make(map[string]*os.File),
 		eventChan: make(chan Event, config.EventBufferSize),
+		selfPid:   os.Getpid(),
 	}
 
 	// Start worker pool
@@ -49,6 +52,10 @@ func NewEventMapper() *EventMapper {
 func (e *EventMapper) Close() {
 	close(e.eventChan)
 	e.wg.Wait()
+
+	e.writersMu.Lock()
+	defer e.writersMu.Unlock()
+
 	for _, f := range e.writers {
 		f.Close()
 	}
@@ -89,26 +96,20 @@ func (e *EventMapper) handleEvent(evt Event) {
 	filename := evt.Filename
 	pid := evt.Pid
 
-	// Resolve relative paths to absolute paths
-	if filename != "" && !filepath.IsAbs(filename) {
-		if cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid)); err == nil {
-			filename = filepath.Join(cwd, filename)
-		}
-	}
-
-	data := map[string]string{
-		"pid":      strconv.Itoa(pid),
-		"cid":      strconv.FormatUint(evt.Cid, 10),
-		"comm":     evt.Comm,
-		"filepath": filename,
-	}
-
+	originalFilename := filename
 	meta := e.resolver.ResolveCgroupMetadata(evt.Cid, pid)
 
-	if e.shouldIgnore(meta.Type, meta.Info, evt.Comm) {
+	if e.shouldIgnore(meta.Type, meta.Info, evt.Comm, pid, filename) {
 		return
 	}
 
+	// First event: Original filename
+	data := map[string]string{
+		"pid":           strconv.Itoa(pid),
+		"cid":           strconv.FormatUint(evt.Cid, 10),
+		"comm":          evt.Comm,
+		"filepath":      originalFilename,
+	}
 	e.printEvent(evt.EventType, data, meta.Type, meta.Info)
 }
 
@@ -138,38 +139,180 @@ func (e *EventMapper) processLine(line string) {
 
 	pid, _ := strconv.Atoi(data["pid"])
 	cid, _ := strconv.ParseUint(data["cid"], 10, 64)
-
-	// For legacy line processing, we can just construct an Event and send it to the channel
-	// to benefit from the worker pool, or process directly.
-	// Since Run() is single threaded reading stdin, sending to channel is fine.
-	// However, processLine logic is slightly different (parsing regex).
-	// Let's just keep processLine synchronous or adapt it.
-	// The request was about ProcessEvent (BPF path).
-	// But to be consistent, let's use the channel.
-	// But wait, processLine parses data map which might have extra fields (argv) that Event struct doesn't have?
-	// Event struct has: EventType, Pid, Cid, Comm, Filename.
-	// processLine extracts these.
-	// So we can map them.
-
 	comm := data["comm"]
-	filename := data["filepath"]
+	filename := filepath.Base(data["filepath"])
 
 	e.ProcessEvent(eventType, pid, cid, comm, filename)
 }
 
-func (e *EventMapper) shouldIgnore(ctype string, info map[string]interface{}, comm string) bool {
+func (e *EventMapper) shouldIgnore(ctype string, info map[string]interface{}, comm string, pid int, filename string) bool {
+	// 1. Filter self
+	if pid == e.selfPid {
+		return true
+	}
+
 	if !config.FilterSystemEvents {
 		return false
 	}
-	if config.IgnoredCommands[comm] {
+
+	// 2. Dynamic Filtering
+	for _, rule := range config.Filters {
+		if e.matchRule(rule, ctype, info, comm, pid, filename) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (e *EventMapper) matchRule(rule config.FilterRule, ctype string, info map[string]interface{}, comm string, pid int, filename string) bool {
+	for _, cond := range rule.Conditions {
+		if !e.matchCondition(cond, ctype, info, comm, pid, filename) {
+			return false // All conditions must match (AND)
+		}
+	}
+	return true
+}
+
+func (e *EventMapper) matchCondition(cond config.FilterCondition, ctype string, info map[string]interface{}, comm string, pid int, filename string) bool {
+	val := e.resolveValue(cond.Field, ctype, info, comm, pid, filename)
+	if val == nil {
+		return false
+	}
+
+	switch cond.Operator {
+	case "equals":
+		return e.opEquals(val, cond.Value)
+	case "not_equals":
+		return e.opNotEquals(val, cond.Value)
+	case "prefix":
+		return e.opPrefix(val, cond.Value)
+	case "not_prefix":
+		return e.opNotPrefix(val, cond.Value)
+	case "suffix":
+		return e.opSuffix(val, cond.Value)
+	case "not_suffix":
+		return e.opNotSuffix(val, cond.Value)
+	case "contains":
+		return e.opContains(val, cond.Value)
+	case "not_contains":
+		return e.opNotContains(val, cond.Value)
+	case "in":
+		return e.opIn(val, cond.Value)
+	case "not_in":
+		return e.opNotIn(val, cond.Value)
+	}
+	return false
+}
+
+func (e *EventMapper) resolveValue(field string, ctype string, info map[string]interface{}, comm string, pid int, filename string) interface{} {
+	switch field {
+	case "type":
+		return ctype
+	case "pid":
+		return pid
+	case "comm":
+		return comm
+	case "filepath":
+		return filename
+	case "cgroup_paths":
+		if paths, ok := info["cgroup_paths"].([]string); ok {
+			return paths
+		}
+		return nil
+	default:
+		if v, ok := info[field]; ok {
+			return v
+		}
+		return nil
+	}
+}
+
+func (e *EventMapper) getStringSlice(v interface{}) []string {
+	if s, ok := v.([]string); ok {
+		return s
+	}
+	if s, ok := v.([]interface{}); ok {
+		var res []string
+		for _, item := range s {
+			if str, ok := item.(string); ok {
+				res = append(res, str)
+			}
+		}
+		return res
+	}
+	if s, ok := v.(string); ok {
+		return []string{s}
+	}
+	return nil
+}
+
+func (e *EventMapper) opEquals(val, condVal interface{}) bool {
+	if listVal, ok := val.([]string); ok {
+		if s, ok := condVal.(string); ok {
+			for _, item := range listVal {
+				if item == s {
+					return true
+				}
+			}
+			return false
+		}
+		return false
+	}
+	if iVal, ok := val.(int); ok {
+		if fVal, ok := condVal.(float64); ok {
+			return iVal == int(fVal)
+		}
+		if iVal2, ok := condVal.(int); ok {
+			return iVal == iVal2
+		}
+	}
+	return val == condVal
+}
+
+func (e *EventMapper) opNotEquals(val, condVal interface{}) bool {
+	if listVal, ok := val.([]string); ok {
+		if s, ok := condVal.(string); ok {
+			for _, item := range listVal {
+				if item == s {
+					return false
+				}
+			}
+			return true
+		}
 		return true
 	}
-	if strings.HasPrefix(comm, "runc:") {
-		return true
+	if iVal, ok := val.(int); ok {
+		if fVal, ok := condVal.(float64); ok {
+			return iVal != int(fVal)
+		}
+		if iVal2, ok := condVal.(int); ok {
+			return iVal != iVal2
+		}
 	}
-	if ctype == "k8s" {
-		if ns, ok := info["namespace"].(string); ok {
-			if config.IgnoreK8sNamespaces[ns] {
+	return val != condVal
+}
+
+func (e *EventMapper) opPrefix(val, condVal interface{}) bool {
+	prefixes := e.getStringSlice(condVal)
+	if prefixes == nil {
+		return false
+	}
+
+	if listVal, ok := val.([]string); ok {
+		for _, item := range listVal {
+			for _, p := range prefixes {
+				if strings.HasPrefix(item, p) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	if strVal, ok := val.(string); ok {
+		for _, p := range prefixes {
+			if strings.HasPrefix(strVal, p) {
 				return true
 			}
 		}
@@ -177,7 +320,203 @@ func (e *EventMapper) shouldIgnore(ctype string, info map[string]interface{}, co
 	return false
 }
 
+func (e *EventMapper) opNotPrefix(val, condVal interface{}) bool {
+	prefixes := e.getStringSlice(condVal)
+	if prefixes == nil {
+		return true
+	}
+
+	if listVal, ok := val.([]string); ok {
+		for _, item := range listVal {
+			for _, p := range prefixes {
+				if strings.HasPrefix(item, p) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+
+	if strVal, ok := val.(string); ok {
+		for _, p := range prefixes {
+			if strings.HasPrefix(strVal, p) {
+				return false
+			}
+		}
+		return true
+	}
+	return true
+}
+
+func (e *EventMapper) opSuffix(val, condVal interface{}) bool {
+	suffixes := e.getStringSlice(condVal)
+	if suffixes == nil {
+		return false
+	}
+
+	if listVal, ok := val.([]string); ok {
+		for _, item := range listVal {
+			for _, s := range suffixes {
+				if strings.HasSuffix(item, s) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	if strVal, ok := val.(string); ok {
+		for _, s := range suffixes {
+			if strings.HasSuffix(strVal, s) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (e *EventMapper) opNotSuffix(val, condVal interface{}) bool {
+	suffixes := e.getStringSlice(condVal)
+	if suffixes == nil {
+		return true
+	}
+
+	if listVal, ok := val.([]string); ok {
+		for _, item := range listVal {
+			for _, s := range suffixes {
+				if strings.HasSuffix(item, s) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+
+	if strVal, ok := val.(string); ok {
+		for _, s := range suffixes {
+			if strings.HasSuffix(strVal, s) {
+				return false
+			}
+		}
+		return true
+	}
+	return true
+}
+
+func (e *EventMapper) opContains(val, condVal interface{}) bool {
+	substrings := e.getStringSlice(condVal)
+	if substrings == nil {
+		return false
+	}
+
+	if listVal, ok := val.([]string); ok {
+		for _, item := range listVal {
+			for _, sub := range substrings {
+				if strings.Contains(item, sub) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	if strVal, ok := val.(string); ok {
+		for _, sub := range substrings {
+			if strings.Contains(strVal, sub) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (e *EventMapper) opNotContains(val, condVal interface{}) bool {
+	substrings := e.getStringSlice(condVal)
+	if substrings == nil {
+		return true
+	}
+
+	if listVal, ok := val.([]string); ok {
+		for _, item := range listVal {
+			for _, sub := range substrings {
+				if strings.Contains(item, sub) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+
+	if strVal, ok := val.(string); ok {
+		for _, sub := range substrings {
+			if strings.Contains(strVal, sub) {
+				return false
+			}
+		}
+		return true
+	}
+	return true
+}
+
+func (e *EventMapper) opIn(val, condVal interface{}) bool {
+	list := e.getStringSlice(condVal)
+	if list == nil {
+		return false
+	}
+
+	if listVal, ok := val.([]string); ok {
+		for _, vItem := range listVal {
+			for _, lItem := range list {
+				if vItem == lItem {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	if strVal, ok := val.(string); ok {
+		for _, item := range list {
+			if strVal == item {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (e *EventMapper) opNotIn(val, condVal interface{}) bool {
+	list := e.getStringSlice(condVal)
+	if list == nil {
+		return true
+	}
+
+	if listVal, ok := val.([]string); ok {
+		for _, vItem := range listVal {
+			for _, lItem := range list {
+				if vItem == lItem {
+					return false
+				}
+			}
+		}
+		return true
+	}
+
+	if strVal, ok := val.(string); ok {
+		for _, item := range list {
+			if strVal == item {
+				return false
+			}
+		}
+		return true
+	}
+	return true
+}
+
 func (e *EventMapper) getWriter(filename string) (*os.File, error) {
+	e.writersMu.Lock()
+	defer e.writersMu.Unlock()
+
 	if w, ok := e.writers[filename]; ok {
 		return w, nil
 	}
@@ -238,15 +577,19 @@ func (e *EventMapper) printEvent(eventType string, data map[string]string, metaT
 
 	if config.OutputFormat == "json" {
 		entry := map[string]interface{}{
-			"type":      metaType,
-			"event":     eventType,
-			"pid":       pid,
-			"comm":      comm,
-			"filename":  filename,
-			"filepath":  fpath,
-			"timestamp": timestamp,
+			"type":          metaType,
+			"event":         eventType,
+			"pid":           pid,
+			"comm":          comm,
+			"filename":      filename,
+			"filepath":      fpath,
+			"timestamp":     timestamp,
 		}
 		for k, v := range metaInfo {
+			// Exclude internal resolution paths from logs
+			if k == "merged_dir" || k == "upper_dir" || k == "lower_dir" || k == "mounts" {
+				continue
+			}
 			entry[k] = v
 		}
 		bytes, _ := json.Marshal(entry)

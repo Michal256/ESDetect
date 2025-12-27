@@ -28,14 +28,14 @@ The main entry point of the application.
 This package handles all interaction with the Linux Kernel.
 
 -   **`probe.c`**: The C source code for the eBPF program.
-    -   Defines `tracepoint/syscalls/sys_enter_execve` and `sys_enter_openat`.
+    -   Defines `tracepoint/syscalls/sys_enter_execve`, `sys_enter_openat`, `sys_enter_readlink`, and `sys_enter_readlinkat`.
     -   Captures PID, Cgroup ID, Command Name (`comm`), and Filename.
     -   Uses `bpf_ringbuf_submit` to send data to userspace.
     -   **Note**: It manually defines kernel structs to avoid dependency on `vmlinux.h` for broader compatibility.
 -   **`loader.go`**: The Go userspace loader.
     -   Uses `cilium/ebpf` library.
     -   Loads the compiled BPF objects into the kernel.
-    -   Attaches tracepoints.
+    -   Attaches tracepoints (`execve`, `openat`, `readlink`, `readlinkat`).
     -   Reads from the `ringbuf` in a loop and decodes the binary data into Go structs.
 -   **`gen.go`**: Contains the `//go:generate` directive.
     -   Uses `bpf2go` to compile `probe.c` into Go artifacts (`event_bpfel_amd64.go`, etc.).

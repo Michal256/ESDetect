@@ -20,11 +20,18 @@ func main() {
 	outputFormat := flag.String("output-format", "text", "Output format (text, json)")
 	workers := flag.Int("workers", 4, "Number of concurrent worker routines")
 	bufferSize := flag.Int("buffer-size", 10000, "Size of the event buffer channel")
+	filterConfig := flag.String("filter-config", "", "Path to JSON filter configuration file")
 
 	flag.Parse()
 
 	// Apply configuration
 	config.Init() // Keep env var support if needed, or override below
+	if *filterConfig != "" {
+		if err := config.LoadFilters(*filterConfig); err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading filters: %v\n", err)
+			os.Exit(1)
+		}
+	}
 	config.OutputDir = *outputDir
 	config.Debug = *debug
 	config.PrintHostEvents = *printHost

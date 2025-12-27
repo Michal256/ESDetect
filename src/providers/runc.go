@@ -3,7 +3,6 @@ package providers
 import (
 	"bpf-detect/config"
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -40,19 +39,12 @@ func (p *RuncProvider) GetMetadata(containerId string) Metadata {
 			for _, entry := range entries {
 				if entry.IsDir() {
 					runcPath := filepath.Join(config.RootlessDockerBase, entry.Name(), "docker", "runtime-runc", "moby")
-					if config.Debug {
-						fmt.Printf("DEBUG: Checking rootless path: %s\n", runcPath)
-					}
 					if meta := p.checkDir(runcPath, containerId); meta != nil {
 						return *meta
 					}
 				}
 			}
-		} else if config.Debug {
-			fmt.Printf("DEBUG: Failed to read dir %s: %v\n", config.RootlessDockerBase, err)
 		}
-	} else if config.Debug {
-		fmt.Printf("DEBUG: Failed to stat %s: %v\n", config.RootlessDockerBase, err)
 	}
 
 	return Metadata{}
@@ -63,38 +55,14 @@ func (p *RuncProvider) checkDir(baseDir, containerId string) *Metadata {
 
 	// Security: Validate containerId to prevent directory traversal
 	if strings.ContainsAny(containerId, `/\`) || strings.Contains(containerId, "..") {
-		if config.Debug {
-			fmt.Printf("DEBUG: Invalid container ID (potential traversal): %s\n", containerId)
-		}
 		return nil
 	}
 
-	if config.Debug {
-		fmt.Printf("DEBUG: Checking dir: %s for container: '%s'\n", baseDir, containerId)
-	}
 	// 1. Try state.json (runc)
 	statePath := filepath.Join(baseDir, containerId, "state.json")
 	if _, err := os.Stat(statePath); err == nil {
-		if config.Debug {
-			fmt.Printf("DEBUG: Found state.json at: %s\n", statePath)
-		}
 		if meta := p.parseStateJson(statePath, baseDir, containerId); meta != nil {
 			return meta
-		}
-	} else {
-		if config.Debug {
-			fmt.Printf("DEBUG: Failed to stat state.json at %s: %v\n", statePath, err)
-			// Check if dir exists and list it
-			containerDir := filepath.Join(baseDir, containerId)
-			if info, err := os.Stat(containerDir); err == nil && info.IsDir() {
-				entries, _ := os.ReadDir(containerDir)
-				fmt.Printf("DEBUG: Directory %s exists. Contents:\n", containerDir)
-				for _, e := range entries {
-					fmt.Printf("  %s\n", e.Name())
-				}
-			} else {
-				fmt.Printf("DEBUG: Container dir %s does not exist or is not a dir. Error: %v\n", containerDir, err)
-			}
 		}
 	}
 
@@ -116,162 +84,20 @@ func (p *RuncProvider) parseStateJson(path, baseDir, containerId string) *Metada
 	}
 	defer f.Close()
 
-	var data struct {
-		Config struct {
-			Labels interface{} `json:"labels"` // Can be list or dict
-			Mounts []struct {
-				Source string `json:"source"`
-			} `json:"mounts"`
-		} `json:"config"`
-		Bundle string            `json:"bundle"`
-		Labels map[string]string `json:"labels"` // Root level labels
-		Id     string            `json:"id"`
-	}
-
+	var data stateData
 	if err := json.NewDecoder(f).Decode(&data); err != nil {
 		return nil
 	}
 
-	annotations := make(map[string]string)
+	annotations := p.extractAnnotations(data.Config.Labels)
 	
-	// Handle labels being list or dict
-	if labelsMap, ok := data.Config.Labels.(map[string]interface{}); ok {
-		for k, v := range labelsMap {
-			if strVal, ok := v.(string); ok {
-				annotations[k] = strVal
-			}
-		}
-	} else if labelsList, ok := data.Config.Labels.([]interface{}); ok {
-		for _, l := range labelsList {
-			if s, ok := l.(string); ok {
-				parts := strings.SplitN(s, "=", 2)
-				if len(parts) == 2 {
-					annotations[parts[0]] = parts[1]
-				}
-			}
-		}
+	// Merge root labels if any
+	for k, v := range data.Labels {
+		annotations[k] = v
 	}
 
-	ns := annotations["io.kubernetes.pod.namespace"]
-	if ns == "" {
-		ns = annotations["io.kubernetes.cri.sandbox-namespace"]
-	}
-	podName := annotations["io.kubernetes.pod.name"]
-	if podName == "" {
-		podName = annotations["io.kubernetes.cri.sandbox-name"]
-	}
-	podUid := annotations["io.kubernetes.pod.uid"]
-	if podUid == "" {
-		podUid = annotations["io.kubernetes.cri.sandbox-uid"]
-	}
-
-	image := annotations["io.kubernetes.cri.image-name"]
-	if image == "" {
-		image = annotations["io.kubernetes.cri.image-ref"]
-	}
-	if image == "" {
-		image = annotations["org.opencontainers.image.ref.name"]
-	}
-
-	if image == "" {
-		// 1. Try bundle config.json
-		bundlePath := data.Bundle
-		if bundlePath == "" {
-			for k, v := range data.Labels {
-				if k == "bundle" {
-					bundlePath = v
-					break
-				}
-			}
-			// Also check if labels are in "key=value" format in root labels if it was a list (but struct says map[string]string, so json decoder handles object. If it's a list in JSON, this struct field might fail or be empty if not matched. Python code iterates list. Let's assume map for root labels as per typical runc state.json, but check if we need to be more robust.)
-			// Actually runc state.json root labels are usually map.
-		}
-
-		if bundlePath != "" {
-			configJsonPath := filepath.Join(bundlePath, "config.json")
-			if fBundle, err := os.Open(configJsonPath); err == nil {
-				var cdata struct {
-					Annotations map[string]string `json:"annotations"`
-				}
-				if err := json.NewDecoder(fBundle).Decode(&cdata); err == nil {
-					image = cdata.Annotations["io.kubernetes.cri.image-name"]
-					if image == "" {
-						image = cdata.Annotations["io.kubernetes.cri.image-ref"]
-					}
-					if image == "" {
-						image = cdata.Annotations["org.opencontainers.image.ref.name"]
-					}
-				}
-				fBundle.Close()
-			}
-		}
-
-		// 2. Try Docker config.v2.json
-		if image == "" {
-			for _, m := range data.Config.Mounts {
-				if config.Debug {
-					fmt.Printf("DEBUG: Checking mount: %s\n", m.Source)
-				}
-				if strings.Contains(m.Source, "/containers/") && strings.Contains(m.Source, containerId) {
-					idx := strings.Index(m.Source, containerId)
-					if idx != -1 {
-						containerDir := m.Source[:idx+len(containerId)]
-						
-						// Handle Rootless Path Remapping
-						if strings.HasPrefix(containerDir, "/var/lib/docker") && strings.Contains(baseDir, "/run/user/") {
-							parts := strings.Split(baseDir, "/")
-							for i, part := range parts {
-								if part == "user" && i+1 < len(parts) {
-									uidStr := parts[i+1]
-									if u, err := user.LookupId(uidStr); err == nil {
-										rel := strings.TrimPrefix(containerDir, "/var/lib/docker")
-										containerDir = filepath.Join(u.HomeDir, ".local/share/docker", strings.TrimPrefix(rel, "/"))
-										if config.Debug {
-											fmt.Printf("DEBUG: Remapped containerDir to: %s\n", containerDir)
-										}
-									} else if config.Debug {
-										fmt.Printf("DEBUG: Failed to lookup user %s: %v\n", uidStr, err)
-									}
-									break
-								}
-							}
-						}
-
-						dockCfg := filepath.Join(containerDir, "config.v2.json")
-						if config.Debug {
-							fmt.Printf("DEBUG: Checking config.v2.json at: %s\n", dockCfg)
-						}
-						if fDock, err := os.Open(dockCfg); err == nil {
-							var ddata struct {
-								Config struct {
-									Image string `json:"Image"`
-								} `json:"Config"`
-								Name string `json:"Name"`
-							}
-							if err := json.NewDecoder(fDock).Decode(&ddata); err == nil {
-								image = ddata.Config.Image
-								if config.Debug {
-									fmt.Printf("DEBUG: Found image: %s\n", image)
-								}
-								if annotations["io.kubernetes.pod.name"] == "" {
-									cName := strings.TrimPrefix(ddata.Name, "/")
-									if cName != "" {
-										annotations["container_name"] = cName
-									}
-								}
-							} else if config.Debug {
-								fmt.Printf("DEBUG: Failed to decode config.v2.json: %v\n", err)
-							}
-							fDock.Close()
-							break
-						} else if config.Debug {
-							fmt.Printf("DEBUG: Failed to open config.v2.json: %v\n", err)
-						}
-					}
-				}
-			}
-		}
-	}
+	ns, podName, podUid := p.resolveK8sMetadata(annotations)
+	image := p.resolveImage(annotations, data, baseDir, containerId)
 
 	finalId := data.Id
 	if finalId == "" {
@@ -286,6 +112,166 @@ func (p *RuncProvider) parseStateJson(path, baseDir, containerId string) *Metada
 		ContainerId: finalId,
 		Labels:      annotations,
 	}
+}
+
+type stateData struct {
+	Config struct {
+		Labels interface{} `json:"labels"` // Can be list or dict
+		Mounts []struct {
+			Source      string `json:"source"`
+			Destination string `json:"destination"`
+		} `json:"mounts"`
+	} `json:"config"`
+	Bundle string            `json:"bundle"`
+	Labels map[string]string `json:"labels"` // Root level labels
+	Id     string            `json:"id"`
+}
+
+func (p *RuncProvider) extractAnnotations(labels interface{}) map[string]string {
+	annotations := make(map[string]string)
+	if labelsMap, ok := labels.(map[string]interface{}); ok {
+		for k, v := range labelsMap {
+			if strVal, ok := v.(string); ok {
+				annotations[k] = strVal
+			}
+		}
+	} else if labelsList, ok := labels.([]interface{}); ok {
+		for _, l := range labelsList {
+			if s, ok := l.(string); ok {
+				parts := strings.SplitN(s, "=", 2)
+				if len(parts) == 2 {
+					annotations[parts[0]] = parts[1]
+				}
+			}
+		}
+	}
+	return annotations
+}
+
+func (p *RuncProvider) resolveK8sMetadata(annotations map[string]string) (string, string, string) {
+	ns := annotations["io.kubernetes.pod.namespace"]
+	if ns == "" {
+		ns = annotations["io.kubernetes.cri.sandbox-namespace"]
+	}
+	podName := annotations["io.kubernetes.pod.name"]
+	if podName == "" {
+		podName = annotations["io.kubernetes.cri.sandbox-name"]
+	}
+	podUid := annotations["io.kubernetes.pod.uid"]
+	if podUid == "" {
+		podUid = annotations["io.kubernetes.cri.sandbox-uid"]
+	}
+	return ns, podName, podUid
+}
+
+func (p *RuncProvider) resolveImageFromAnnotations(annotations map[string]string) string {
+	image := annotations["io.kubernetes.cri.image-name"]
+	if image == "" {
+		image = annotations["io.kubernetes.cri.image-ref"]
+	}
+	if image == "" {
+		image = annotations["org.opencontainers.image.ref.name"]
+	}
+	return image
+}
+
+func (p *RuncProvider) resolveImage(annotations map[string]string, data stateData, baseDir, containerId string) string {
+	if image := p.resolveImageFromAnnotations(annotations); image != "" {
+		return image
+	}
+
+	// 1. Try bundle config.json
+	if img := p.resolveImageFromBundle(data); img != "" {
+		return img
+	}
+
+	// 2. Try Docker config.v2.json
+	if img := p.resolveImageFromDockerConfig(data, baseDir, containerId, annotations); img != "" {
+		return img
+	}
+
+	return ""
+}
+
+func (p *RuncProvider) resolveImageFromBundle(data stateData) string {
+	bundlePath := data.Bundle
+	if bundlePath == "" {
+		for k, v := range data.Labels {
+			if k == "bundle" {
+				bundlePath = v
+				break
+			}
+		}
+	}
+
+	if bundlePath != "" {
+		configJsonPath := filepath.Join(bundlePath, "config.json")
+		if fBundle, err := os.Open(configJsonPath); err == nil {
+			defer fBundle.Close()
+			var cdata struct {
+				Annotations map[string]string `json:"annotations"`
+			}
+			if err := json.NewDecoder(fBundle).Decode(&cdata); err == nil {
+				if img := cdata.Annotations["io.kubernetes.cri.image-name"]; img != "" {
+					return img
+				}
+				if img := cdata.Annotations["io.kubernetes.cri.image-ref"]; img != "" {
+					return img
+				}
+				if img := cdata.Annotations["org.opencontainers.image.ref.name"]; img != "" {
+					return img
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func (p *RuncProvider) resolveImageFromDockerConfig(data stateData, baseDir, containerId string, annotations map[string]string) string {
+	for _, m := range data.Config.Mounts {
+		if strings.Contains(m.Source, "/containers/") && strings.Contains(m.Source, containerId) {
+			idx := strings.Index(m.Source, containerId)
+			if idx != -1 {
+				containerDir := m.Source[:idx+len(containerId)]
+				
+				// Handle Rootless Path Remapping
+				if strings.HasPrefix(containerDir, "/var/lib/docker") && strings.Contains(baseDir, "/run/user/") {
+					parts := strings.Split(baseDir, "/")
+					for i, part := range parts {
+						if part == "user" && i+1 < len(parts) {
+							uidStr := parts[i+1]
+							if u, err := user.LookupId(uidStr); err == nil {
+								rel := strings.TrimPrefix(containerDir, "/var/lib/docker")
+								containerDir = filepath.Join(u.HomeDir, ".local/share/docker", strings.TrimPrefix(rel, "/"))
+							}
+							break
+						}
+					}
+				}
+
+				dockCfg := filepath.Join(containerDir, "config.v2.json")
+				if fDock, err := os.Open(dockCfg); err == nil {
+					defer fDock.Close()
+					var ddata struct {
+						Config struct {
+							Image string `json:"Image"`
+						} `json:"Config"`
+						Name string `json:"Name"`
+					}
+					if err := json.NewDecoder(fDock).Decode(&ddata); err == nil {
+						if annotations["io.kubernetes.pod.name"] == "" {
+							cName := strings.TrimPrefix(ddata.Name, "/")
+							if cName != "" {
+								annotations["container_name"] = cName
+							}
+						}
+						return ddata.Config.Image
+					}
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func (p *RuncProvider) parseConfigJson(path, containerId string) *Metadata {
@@ -303,26 +289,8 @@ func (p *RuncProvider) parseConfigJson(path, containerId string) *Metadata {
 	}
 
 	annotations := data.Annotations
-	ns := annotations["io.kubernetes.pod.namespace"]
-	if ns == "" {
-		ns = annotations["io.kubernetes.cri.sandbox-namespace"]
-	}
-	podName := annotations["io.kubernetes.pod.name"]
-	if podName == "" {
-		podName = annotations["io.kubernetes.cri.sandbox-name"]
-	}
-	podUid := annotations["io.kubernetes.pod.uid"]
-	if podUid == "" {
-		podUid = annotations["io.kubernetes.cri.sandbox-uid"]
-	}
-
-	image := annotations["io.kubernetes.cri.image-name"]
-	if image == "" {
-		image = annotations["io.kubernetes.cri.image-ref"]
-	}
-	if image == "" {
-		image = annotations["org.opencontainers.image.ref.name"]
-	}
+	ns, podName, podUid := p.resolveK8sMetadata(annotations)
+	image := p.resolveImageFromAnnotations(annotations)
 
 	return &Metadata{
 		Namespace:   ns,

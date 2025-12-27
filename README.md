@@ -4,7 +4,7 @@ The eBPF/SBOM Detect. It uses eBPF to detect the runtime events relevant to the 
 
 ## Components
 
-**ESDetect**: Captures runtime events (`execve`, `open`) using native eBPF (Go) or `bpftrace` (legacy) and resolves container/Kubernetes metadata.
+**ESDetect**: Captures runtime events (`execve`, `open`, `readlink`) using native eBPF (Go) or `bpftrace` (legacy) and resolves container/Kubernetes metadata.
 
 ## Prerequisites
 
@@ -60,6 +60,20 @@ By default, system events (like Kubernetes system pods) are filtered out. Disabl
 sudo ./bpf-detect -filter-system-events=false
 ```
 
+**6. Custom Filtering**
+You can provide a JSON configuration file to define custom filtering rules. This is useful for ignoring specific noisy processes or paths.
+
+```bash
+sudo ./bpf-detect -filter-config tests/filters.json
+```
+
+For a complete guide on available fields, operators, and configuration examples, see the [Dynamic Filtering Documentation](docs/filtering.md).
+
+
+## Architecture
+
+![Program Flow](docs/diagram.jpg)
+
 
 ### 1. Runtime Detection (ESDetect)
 
@@ -96,6 +110,7 @@ sudo bpftrace trace.bt | sudo ./bpf-detect -use-bpftrace [flags]
 | `-debug` | bool | `false` | Enable debug logging. |
 | `-print-host-events` | bool | `false` | Print events from host processes (non-containerized). |
 | `-filter-system-events` | bool | `true` | Filter out system events (k8s system pods, common system commands). |
+| `-filter-config` | string | `""` | Path to a JSON file containing custom filter rules. |
 | `-metadata-provider` | string | `all` | Metadata provider to use (`all`, `runc`). |
 | `-use-bpftrace` | bool | `false` | Use legacy bpftrace input mode (stdin). |
 | `-workers` | int | `4` | Number of concurrent worker routines for event processing. |

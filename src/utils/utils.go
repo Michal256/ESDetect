@@ -4,21 +4,8 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 )
-
-func RunCommand(args []string) string {
-	if len(args) == 0 {
-		return ""
-	}
-	cmd := exec.Command(args[0], args[1:]...)
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
 
 func GetCgroupPathsForPid(pid int) []string {
 	var paths []string

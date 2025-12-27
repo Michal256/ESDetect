@@ -1,0 +1,94 @@
+[
+    {
+        "description": "Filter Host Init Process",
+        "conditions": [
+            {
+                "field": "type",
+                "operator": "equals",
+                "value": "host"
+            },
+            {
+                "field": "pid",
+                "operator": "equals",
+                "value": 1
+            }
+        ]
+    },
+    {
+        "description": "Filter Host Noise Paths (Prefixes)",
+        "conditions": [
+            {
+                "field": "type",
+                "operator": "equals",
+                "value": "host"
+            },
+            {
+                "field": "filepath",
+                "operator": "prefix",
+                "value": [
+                    "/proc/",
+                    "/sys/",
+                    "/dev/",
+                    "/run/",
+                    "/tmp/",
+                    "/var/log/",
+                    "loop"
+                ]
+            }
+        ]
+    },
+    {
+        "description": "Filter Host Noise Paths (Exact)",
+        "conditions": [
+            {
+                "field": "type",
+                "operator": "equals",
+                "value": "host"
+            },
+            {
+                "field": "filepath",
+                "operator": "in",
+                "value": [
+                    "/etc/ld.so.cache",
+                    "..",
+                    ".",
+                    "/",
+                    "devices",
+                    "virtual",
+                    "block"
+                ]
+            }
+        ]
+    },
+    {
+        "description": "Filter runc: commands",
+        "conditions": [
+            {
+                "field": "comm",
+                "operator": "prefix",
+                "value": "runc:"
+            }
+        ]
+    },
+    {
+        "description": "Filter System Namespaces",
+        "conditions": [
+            {
+                "field": "type",
+                "operator": "equals",
+                "value": "k8s"
+            },
+            {
+                "field": "namespace",
+                "operator": "in",
+                "value": [
+                    "kube-system",
+                    "calico-system",
+                    "ingress-nginx",
+                    "microk8s",
+                    "local-path-storage"
+                ]
+            }
+        ]
+    }
+]

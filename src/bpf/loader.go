@@ -41,6 +41,18 @@ func RunBPF(cb EventCallback) error {
 	}
 	defer kpOpen.Close()
 
+	kpReadlink, err := link.Tracepoint("syscalls", "sys_enter_readlink", objs.TraceReadlink, nil)
+	if err != nil {
+		return fmt.Errorf("linking trace_readlink: %v", err)
+	}
+	defer kpReadlink.Close()
+
+	kpReadlinkat, err := link.Tracepoint("syscalls", "sys_enter_readlinkat", objs.TraceReadlinkat, nil)
+	if err != nil {
+		return fmt.Errorf("linking trace_readlinkat: %v", err)
+	}
+	defer kpReadlinkat.Close()
+
 	// Open a ringbuf reader from userspace RINGBUF map described in the
 	// eBPF C program.
 	rd, err := ringbuf.NewReader(objs.Events)
@@ -76,11 +88,16 @@ func RunBPF(cb EventCallback) error {
 			eventType = "EXECVE"
 		} else if event.Type == 2 {
 			eventType = "OPEN"
+		} else if event.Type == 3 {
+			eventType = "READLINK"
 		}
 
 		// Convert C strings to Go strings
-		comm := string(bytes.TrimRight(event.Comm[:], "\x00"))
-		filename := string(bytes.TrimRight(event.Filename[:], "\x00"))
+		// We use Split to find the first null byte and take everything before it.
+		// bytes.TrimRight is insufficient because the ringbuf memory is reused and may contain
+		// garbage data after the first null terminator.
+		comm := string(bytes.Split(event.Comm[:], []byte{0})[0])
+		filename := string(bytes.Split(event.Filename[:], []byte{0})[0])
 
 		cb(eventType, int(event.Pid), event.CgroupId, comm, filename)
 	}

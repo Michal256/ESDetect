@@ -5,7 +5,6 @@ import (
 	"bpf-detect/patterns"
 	"bpf-detect/providers"
 	"bpf-detect/utils"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -42,19 +41,10 @@ func (r *CGroupResolver) ResolveCgroupMetadata(cgroupId uint64, hintPid int) Res
 
 	paths, pid := r.findCgroupPaths(cgroupId, hintPid)
 	if len(paths) == 0 {
-		if config.Debug {
-			fmt.Printf("DEBUG: No paths found for cgroup %d\n", cgroupId)
-		}
 		return r.handleUnknown(cgroupId)
-	}
-	if config.Debug {
-		fmt.Printf("DEBUG: Paths for cgroup %d (pid %d): %v\n", cgroupId, pid, paths)
 	}
 
 	containerId, uid := r.extractIdsFromPaths(paths)
-	if config.Debug {
-		fmt.Printf("DEBUG: Extracted IDs - ContainerID: %s, UID: %s\n", containerId, uid)
-	}
 
 	// Attempt to resolve Container metadata
 	if meta := r.resolveContainer(containerId, uid, pid, paths); meta != nil {
@@ -67,9 +57,6 @@ func (r *CGroupResolver) ResolveCgroupMetadata(cgroupId uint64, hintPid int) Res
 	// If we identified a container ID but failed to resolve metadata, do not cache the fallback.
 	// This allows retrying later when the metadata might be available (e.g. state.json created).
 	if containerId != "" {
-		if config.Debug {
-			fmt.Printf("DEBUG: Container ID %s found but metadata missing. Not caching host fallback to allow retry.\n", containerId)
-		}
 		return ResolvedMetadata{
 			Type: "host",
 			Info: map[string]interface{}{
@@ -107,9 +94,6 @@ func (r *CGroupResolver) findCgroupPaths(cgroupId uint64, hintPid int) ([]string
 	}
 
 	// 3. Scan /proc
-	if config.Debug {
-		fmt.Printf("Falling back to /proc scan for cgroup_id: %d\n", cgroupId)
-	}
 	entries, err := os.ReadDir("/proc")
 	if err == nil {
 		for _, entry := range entries {
@@ -160,11 +144,16 @@ func (r *CGroupResolver) scanCgroupFs(targetCgroupId uint64) string {
 	}
 
 	var foundPath string
-	err = filepath.Walk(basePath, func(path string, info os.FileInfo, err error) error {
+	// Optimization: Use WalkDir instead of Walk for better performance
+	err = filepath.WalkDir(basePath, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		if info.IsDir() {
+		if d.IsDir() {
+			info, err := d.Info()
+			if err != nil {
+				return nil
+			}
 			stat, ok := info.Sys().(*syscall.Stat_t)
 			if ok && uint64(stat.Ino) == targetCgroupId {
 				rel, err := filepath.Rel(basePath, path)
@@ -186,18 +175,8 @@ func (r *CGroupResolver) scanCgroupFs(targetCgroupId uint64) string {
 func (r *CGroupResolver) extractIdsFromPaths(paths []string) (string, string) {
 	var containerId, uid string
 	for _, p := range paths {
-		if config.Debug {
-			fmt.Printf("DEBUG: Testing path against DockerCgroup: %s\n", p)
-		}
 		if m := patterns.DockerCgroup.FindStringSubmatch(p); m != nil {
 			containerId = m[patterns.DockerCgroup.SubexpIndex("cid")]
-			if config.Debug {
-				fmt.Printf("DEBUG: Match found! CID: %s\n", containerId)
-			}
-		} else {
-			if config.Debug {
-				fmt.Printf("DEBUG: No match for DockerCgroup. Regex: %s\n", patterns.DockerCgroup.String())
-			}
 		}
 		if m := patterns.CriCgroup.FindStringSubmatch(p); m != nil {
 			containerId = m[patterns.CriCgroup.SubexpIndex("cid")]
@@ -218,9 +197,6 @@ func (r *CGroupResolver) resolveContainer(containerId, uid string, pid int, path
 	// Try via Container ID
 	if containerId != "" {
 		provider := strings.ToLower(config.MetadataProvider)
-		if config.Debug {
-			fmt.Printf("DEBUG: Resolving container %s with provider %s\n", containerId, provider)
-		}
 		if provider == "all" || provider == "runc" {
 			metaData = r.runcProvider.GetMetadata(containerId)
 		}
@@ -290,3 +266,4 @@ func (r *CGroupResolver) handleUnknown(cgroupId uint64) ResolvedMetadata {
 	}
 	return ResolvedMetadata{Type: "unknown", Info: map[string]interface{}{}}
 }
+

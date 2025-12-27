@@ -64,7 +64,10 @@ int trace_execve(struct trace_event_raw_sys_enter *ctx) {
     
     // Note: ctx->args is an array of unsigned long.
     // We need to read the string from user space.
-    bpf_probe_read_user_str(&e->filename, sizeof(e->filename), (const char *)ctx->args[0]);
+    long ret = bpf_probe_read_user_str(&e->filename, sizeof(e->filename), (const char *)ctx->args[0]);
+    if (ret < 0) {
+        e->filename[0] = '\0';
+    }
 
     bpf_ringbuf_submit(e, 0);
     return 0;
@@ -86,7 +89,60 @@ int trace_openat(struct trace_event_raw_sys_enter *ctx) {
 
     // sys_enter_openat(int dfd, const char *filename, int flags, umode_t mode)
     // filename is args[1]
-    bpf_probe_read_user_str(&e->filename, sizeof(e->filename), (const char *)ctx->args[1]);
+    long ret = bpf_probe_read_user_str(&e->filename, sizeof(e->filename), (const char *)ctx->args[1]);
+    if (ret < 0) {
+        e->filename[0] = '\0';
+    }
+
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_enter_readlinkat")
+int trace_readlinkat(struct trace_event_raw_sys_enter *ctx) {
+    struct event_t *e;
+
+    e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e) {
+        return 0;
+    }
+
+    e->pid = bpf_get_current_pid_tgid() >> 32;
+    e->cgroup_id = bpf_get_current_cgroup_id();
+    e->type = 3; // READLINK
+    bpf_get_current_comm(&e->comm, sizeof(e->comm));
+
+    // sys_enter_readlinkat(int dfd, const char *pathname, char *buf, int bufsiz)
+    // pathname is args[1]
+    long ret = bpf_probe_read_user_str(&e->filename, sizeof(e->filename), (const char *)ctx->args[1]);
+    if (ret < 0) {
+        e->filename[0] = '\0';
+    }
+
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_enter_readlink")
+int trace_readlink(struct trace_event_raw_sys_enter *ctx) {
+    struct event_t *e;
+
+    e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e) {
+        return 0;
+    }
+
+    e->pid = bpf_get_current_pid_tgid() >> 32;
+    e->cgroup_id = bpf_get_current_cgroup_id();
+    e->type = 3; // READLINK
+    bpf_get_current_comm(&e->comm, sizeof(e->comm));
+
+    // sys_enter_readlink(const char *pathname, char *buf, int bufsiz)
+    // pathname is args[0]
+    long ret = bpf_probe_read_user_str(&e->filename, sizeof(e->filename), (const char *)ctx->args[0]);
+    if (ret < 0) {
+        e->filename[0] = '\0';
+    }
 
     bpf_ringbuf_submit(e, 0);
     return 0;

@@ -1,0 +1,8 @@
+{
+    "require": {
+        "monolog/monolog": "^3.0",
+        "guzzlehttp/guzzle": "^7.0",
+        "symfony/console": "^6.0",
+        "nesbot/carbon": "^2.0"
+    }
+}
