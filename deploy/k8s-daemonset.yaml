@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: esdetect
+  namespace: default
+  labels:
+    app: esdetect
+spec:
+  selector:
+    matchLabels:
+      app: esdetect
+  template:
+    metadata:
+      labels:
+        app: esdetect
+    spec:
+      hostPID: true  # Required to see host processes
+      containers:
+      - name: esdetect
+        image: esdetect:latest # Ensure this image is available in your cluster registry
+        imagePullPolicy: IfNotPresent
+        command: ["./bpf-detect"]
+        args:
+          - "-output-dir=/app/logs"
+          - "-debug=false"
+          - "-print-host-events=false"
+        securityContext:
+          privileged: true # Required for eBPF
+        volumeMounts:
+        - name: sys-kernel-debug
+          mountPath: /sys/kernel/debug
+        - name: sys-fs-cgroup
+          mountPath: /sys/fs/cgroup
+          readOnly: true
+        - name: proc
+          mountPath: /proc
+        - name: run-containerd
+          mountPath: /run/containerd
+          readOnly: true
+        # Optional: If you want to persist logs to the host
+        - name: logs
+          mountPath: /app/logs
+      volumes:
+      - name: sys-kernel-debug
+        hostPath:
+          path: /sys/kernel/debug
+      - name: sys-fs-cgroup
+        hostPath:
+          path: /sys/fs/cgroup
+      - name: proc
+        hostPath:
+          path: /proc
+      - name: run-containerd
+        hostPath:
+          path: /run/containerd # Location of containerd runtime state
+      - name: logs
+        hostPath:
+          path: /tmp/esdetect-logs
+          type: DirectoryOrCreate

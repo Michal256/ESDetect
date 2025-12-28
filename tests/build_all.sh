@@ -17,9 +17,6 @@ docker build -t rust-app rust-app
 echo "Building .NET App..."
 docker build -t dotnet-app dotnet-app
 
-echo "Building Dart App..."
-docker build -t dart-app dart-app
-
 echo "Building Elixir App..."
 docker build -t elixir-app elixir-app
 

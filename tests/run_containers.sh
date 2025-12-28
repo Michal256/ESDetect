@@ -20,9 +20,6 @@ docker run  -itd --name rust-app rust-app
 echo "Running .NET App..."
 docker run  -itd --name dotnet-app dotnet-app
 
-echo "Running Dart App..."
-docker run  -itd --name dart-app dart-app
-
 echo "Running Elixir App..."
 docker run  -itd --name elixir-app elixir-app
 

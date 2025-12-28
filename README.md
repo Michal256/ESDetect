@@ -24,6 +24,46 @@ The detection tool processes the raw BPF output and adds container metadata. It 
 ./src/build_in_docker.sh
 ```
 
+### 2. Running with Docker
+
+You can run `ESDetect` directly as a Docker container. This requires privileged access and specific volume mounts to inspect the host system.
+
+**Build the Image**
+
+```bash
+docker build -t detect:1.0 .
+```
+
+**Run the Container**
+
+Standard Docker (Rootful):
+```bash
+docker run -it --rm \
+  --privileged \
+  --pid=host \
+  -v /sys/kernel/debug:/sys/kernel/debug:rw \
+  -v /proc:/proc:ro \
+  -v /run:/run:ro \
+  -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
+  -v /var/lib/docker:/var/lib/docker:ro \
+  detect:1.0
+```
+
+Rootless Docker:
+If you are using Rootless Docker, you must mount your user's Docker data directory (usually `~/.local/share/docker`) to `/var/lib/docker` inside the container so the tool can resolve image names.
+
+```bash
+docker run -it --rm \
+  --privileged \
+  --pid=host \
+  -v /sys/kernel/debug:/sys/kernel/debug:rw \
+  -v /proc:/proc:ro \
+  -v /run:/run:ro \
+  -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
+  -v $HOME/.local/share/docker:/var/lib/docker:ro \
+  detect:1.0
+```
+
 ## Usage
 ### Example Scenarios
 
@@ -72,8 +112,46 @@ For a complete guide on available fields, operators, and configuration examples,
 
 ## Architecture
 
-![Program Flow](docs/diagram.jpg)
+```mermaid
+graph TD
+    subgraph Kernel [Linux Kernel Space]
+        Syscall[Syscall: execve / openat / readlink] -->|Trigger| Probe(BPF Probe: probe.c)
+        Probe -->|Capture PID, Comm, Filepath| RingBuf[(eBPF RingBuffer)]
+    end
 
+    subgraph Userspace [Userspace: bpf-detect]
+        Loader[bpf/loader.go] -->|Poll/Read| RingBuf
+        Loader -->|Callback| Main[main.go]
+        Main -->|ProcessEvent| Mapper[mapper/event_mapper.go]
+
+        subgraph Async [Async Processing]
+            Mapper -->|Push| Channel[Buffered Channel]
+            Channel -->|Consume| Workers[Worker Pool]
+        end
+        
+        subgraph Enrichment [Metadata Enrichment]
+            Workers -->|ResolveCgroupMetadata| Resolver[resolver/cgroup_resolver.go]
+            Resolver -->|Check| Cache{In Cache?}
+            Cache -- Yes --> ReturnMeta[Return Metadata]
+            Cache -- No --> FindPath[Find Cgroup Path /proc/pid/cgroup]
+            FindPath --> ExtractID[Extract Container ID]
+            ExtractID --> Provider[providers/runc.go]
+            
+            subgraph FS [Container Runtime FS]
+                Provider -->|Read| StateFile[state.json / config.json]
+            end
+            
+            StateFile -->|Return Pod/Image Info| Provider
+            Provider --> Resolver
+            Resolver -->|Update| Cache
+        end
+        
+        Workers -->|Filter| FilterCheck{Should Ignore?}
+        FilterCheck -- Yes (System/Ignored) --> Drop[Drop Event]
+        FilterCheck -- No --> Format[Format Output]
+        Format --> Write[Write to detect_&lt;image&gt;.log]
+    end
+```
 
 ### 1. Runtime Detection (ESDetect)
 

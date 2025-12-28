@@ -12,7 +12,6 @@ IMAGES=(
     "go-app"
     "rust-app"
     "dotnet-app"
-    "dart-app"
     "elixir-app"
     "swift-app"
     "nodejs-app"

@@ -228,6 +228,29 @@ func (p *RuncProvider) resolveImageFromBundle(data stateData) string {
 }
 
 func (p *RuncProvider) resolveImageFromDockerConfig(data stateData, baseDir, containerId string, annotations map[string]string) string {
+	// Helper to parse config.v2.json
+	parseDockerConfig := func(path string) string {
+		if fDock, err := os.Open(path); err == nil {
+			defer fDock.Close()
+			var ddata struct {
+				Config struct {
+					Image string `json:"Image"`
+				} `json:"Config"`
+				Name string `json:"Name"`
+			}
+			if err := json.NewDecoder(fDock).Decode(&ddata); err == nil {
+				if annotations["io.kubernetes.pod.name"] == "" {
+					cName := strings.TrimPrefix(ddata.Name, "/")
+					if cName != "" {
+						annotations["container_name"] = cName
+					}
+				}
+				return ddata.Config.Image
+			}
+		}
+		return ""
+	}
+
 	for _, m := range data.Config.Mounts {
 		if strings.Contains(m.Source, "/containers/") && strings.Contains(m.Source, containerId) {
 			idx := strings.Index(m.Source, containerId)
@@ -250,30 +273,21 @@ func (p *RuncProvider) resolveImageFromDockerConfig(data stateData, baseDir, con
 				}
 
 				dockCfg := filepath.Join(containerDir, "config.v2.json")
-				if fDock, err := os.Open(dockCfg); err == nil {
-					defer fDock.Close()
-					var ddata struct {
-						Config struct {
-							Image string `json:"Image"`
-						} `json:"Config"`
-						Name string `json:"Name"`
-					}
-					if err := json.NewDecoder(fDock).Decode(&ddata); err == nil {
-						if annotations["io.kubernetes.pod.name"] == "" {
-							cName := strings.TrimPrefix(ddata.Name, "/")
-							if cName != "" {
-								annotations["container_name"] = cName
-							}
-						}
-						return ddata.Config.Image
-					}
+				if img := parseDockerConfig(dockCfg); img != "" {
+					return img
 				}
 			}
 		}
 	}
+
+	// Fallback: Check standard Docker path
+	standardPath := filepath.Join("/var/lib/docker/containers", containerId, "config.v2.json")
+	if img := parseDockerConfig(standardPath); img != "" {
+		return img
+	}
+
 	return ""
 }
-
 func (p *RuncProvider) parseConfigJson(path, containerId string) *Metadata {
 	f, err := os.Open(path)
 	if err != nil {
