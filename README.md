@@ -85,10 +85,9 @@ To deploy `ESDetect` as a DaemonSet on your Kubernetes cluster:
 
     This will deploy the agent on every node. It mounts necessary host paths (`/run`, `/sys/fs/cgroup`) to perform introspection.
 
-## Usage
-### Example Scenarios
+### 4. Running on Host
 
-Here are 5 common ways to use `ESDetect`:
+Once built, you can run the binary directly on the host. Here are common scenarios:
 
 **1. Standard Detection with JSON Output**
 Use this for integration with **ESVerdict** or other tools. JSON format is easier to parse programmatically.
