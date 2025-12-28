@@ -34,8 +34,8 @@ spec:
           readOnly: true
         - name: proc
           mountPath: /proc
-        - name: run-containerd
-          mountPath: /run/containerd
+        - name: run
+          mountPath: /run
           readOnly: true
         # Optional: If you want to persist logs to the host
         - name: logs
@@ -50,9 +50,9 @@ spec:
       - name: proc
         hostPath:
           path: /proc
-      - name: run-containerd
+      - name: run
         hostPath:
-          path: /run/containerd # Location of containerd runtime state
+          path: /run # Covers /run/containerd (CRI) and /run/docker (if present)
       - name: logs
         hostPath:
           path: /tmp/esdetect-logs

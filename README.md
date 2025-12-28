@@ -64,6 +64,27 @@ docker run -it --rm \
   detect:1.0
 ```
 
+### 3. Running on Kubernetes
+
+To deploy `ESDetect` as a DaemonSet on your Kubernetes cluster:
+
+1.  **Build and Push the Image**:
+    Ensure the image is accessible to your cluster (push to a registry or load into nodes).
+    ```bash
+    docker build -t myregistry/esdetect:latest .
+    docker push myregistry/esdetect:latest
+    ```
+
+2.  **Update the Manifest**:
+    Edit `deploy/k8s-daemonset.yaml` to point to your image (`image: myregistry/esdetect:latest`).
+
+3.  **Deploy**:
+    ```bash
+    kubectl apply -f deploy/k8s-daemonset.yaml
+    ```
+
+    This will deploy the agent on every node. It mounts necessary host paths (`/run`, `/sys/fs/cgroup`) to perform introspection.
+
 ## Usage
 ### Example Scenarios
 
