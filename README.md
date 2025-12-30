@@ -31,7 +31,7 @@ You can run `ESDetect` directly as a Docker container. This requires privileged 
 **Build the Image**
 
 ```bash
-docker build -t detect:1.0 .
+docker build -t michalz256/esdetect:1.0 .
 ```
 
 **Run the Container**
@@ -42,11 +42,13 @@ docker run -it --rm \
   --privileged \
   --pid=host \
   -v /sys/kernel/debug:/sys/kernel/debug:rw \
-  -v /proc:/proc:ro \
   -v /run:/run:ro \
   -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
   -v /var/lib/docker:/var/lib/docker:ro \
-  detect:1.0
+  -v $(pwd)/logs:/app/logs \
+  michalz256/esdetect:1.0 \
+  -output-dir /app/logs \
+  -debug=false
 ```
 
 Rootless Docker:
@@ -57,11 +59,13 @@ docker run -it --rm \
   --privileged \
   --pid=host \
   -v /sys/kernel/debug:/sys/kernel/debug:rw \
-  -v /proc:/proc:ro \
   -v /run:/run:ro \
   -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
   -v $HOME/.local/share/docker:/var/lib/docker:ro \
-  detect:1.0
+  -v $(pwd)/logs:/app/logs \
+  michalz256/esdetect:1.0 \
+  -output-dir /app/logs \
+  -debug=false
 ```
 
 ### 3. Running on Kubernetes
@@ -84,6 +88,20 @@ To deploy `ESDetect` as a DaemonSet on your Kubernetes cluster:
     ```
 
     This will deploy the agent on every node. It mounts necessary host paths (`/run`, `/sys/fs/cgroup`) to perform introspection.
+    The configuration supports standard Kubernetes, MicroK8s, EKS, and AKS.
+
+4.  **Collecting Logs**:
+    The DaemonSet is configured to write logs to `/tmp/esdetect-logs` on each Kubernetes node.
+    
+    *   **Option A: Access directly on nodes**
+        SSH into a node and check the directory:
+        ```bash
+        ls -l /tmp/esdetect-logs/
+        tail -f /tmp/esdetect-logs/detect_*.log
+        ```
+    
+    *   **Option B: Use a Sidecar or Log Collector**
+        In a production environment, you should deploy a log collector (like Fluentd, Promtail, or Filebeat) to read these files and ship them to your central logging system (Elasticsearch, Loki, etc.).
 
 ### 4. Running on Host
 
@@ -282,6 +300,13 @@ After collecting the runtime trace using ESDetect, the next step is to use **ESV
 -   `src/`: Go implementation of the metadata resolver (Recommended).
 -   `src_python/`: Python implementation of the metadata resolver (Legacy).
 -   `examples/`: Example applications in various languages for testing.
+
+
+## SBOM
+
+The Docker image includes a Software Bill of Materials (SBOM) for the `ESDetect` tool itself.
+It is located at `/app/esdetect.sbom.json` inside the container.
+
 
 ## License
 

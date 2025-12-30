@@ -17,7 +17,7 @@ spec:
       hostPID: true  # Required to see host processes
       containers:
       - name: esdetect
-        image: esdetect:latest # Ensure this image is available in your cluster registry
+        image: michalz256/esdetect:1.0 # Ensure this image is available in your cluster registry
         imagePullPolicy: IfNotPresent
         command: ["./bpf-detect"]
         args:
@@ -32,10 +32,23 @@ spec:
         - name: sys-fs-cgroup
           mountPath: /sys/fs/cgroup
           readOnly: true
-        - name: proc
-          mountPath: /proc
-        - name: run
-          mountPath: /run
+        - name: run-containerd
+          mountPath: /run/containerd
+          readOnly: true
+        - name: run-docker
+          mountPath: /run/docker
+          readOnly: true
+        - name: run-runc
+          mountPath: /run/runc
+          readOnly: true
+        - name: microk8s-containerd
+          mountPath: /var/snap/microk8s/common/run/containerd
+          readOnly: true
+        - name: var-lib-docker
+          mountPath: /var/lib/docker
+          readOnly: true
+        - name: var-lib-containerd
+          mountPath: /var/lib/containerd
           readOnly: true
         # Optional: If you want to persist logs to the host
         - name: logs
@@ -47,12 +60,30 @@ spec:
       - name: sys-fs-cgroup
         hostPath:
           path: /sys/fs/cgroup
-      - name: proc
+      - name: run-containerd
         hostPath:
-          path: /proc
-      - name: run
+          path: /run/containerd
+          type: DirectoryOrCreate
+      - name: run-docker
         hostPath:
-          path: /run # Covers /run/containerd (CRI) and /run/docker (if present)
+          path: /run/docker
+          type: DirectoryOrCreate
+      - name: run-runc
+        hostPath:
+          path: /run/runc
+          type: DirectoryOrCreate
+      - name: microk8s-containerd
+        hostPath:
+          path: /var/snap/microk8s/common/run/containerd
+          type: DirectoryOrCreate
+      - name: var-lib-docker
+        hostPath:
+          path: /var/lib/docker
+          type: DirectoryOrCreate
+      - name: var-lib-containerd
+        hostPath:
+          path: /var/lib/containerd
+          type: DirectoryOrCreate
       - name: logs
         hostPath:
           path: /tmp/esdetect-logs

@@ -281,7 +281,7 @@ func (p *RuncProvider) resolveImageFromDockerConfig(data stateData, baseDir, con
 	}
 
 	// Fallback: Check standard Docker path
-	standardPath := filepath.Join("/var/lib/docker/containers", containerId, "config.v2.json")
+	standardPath := filepath.Join(config.DockerConfigBase, containerId, "config.v2.json")
 	if img := parseDockerConfig(standardPath); img != "" {
 		return img
 	}

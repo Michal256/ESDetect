@@ -266,4 +266,3 @@ func (r *CGroupResolver) handleUnknown(cgroupId uint64) ResolvedMetadata {
 	}
 	return ResolvedMetadata{Type: "unknown", Info: map[string]interface{}{}}
 }
-

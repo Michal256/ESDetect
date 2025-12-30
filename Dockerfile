@@ -35,6 +35,8 @@ WORKDIR /app
 
 # Copy binary from builder
 COPY --from=builder /app/bpf-detect .
+# Copy SBOM from builder
+COPY --from=builder /app/esdetect.sbom.json .
 
 # BPF requires root privileges
 USER root

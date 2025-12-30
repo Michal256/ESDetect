@@ -17,16 +17,22 @@ var (
 	Filters []FilterRule
 
 	RuncTaskDirs = []string{
+		// Standard Kubernetes (Containerd) - AWS EKS, Azure AKS, Google GKE
 		"/run/containerd/io.containerd.runtime.v2.task/k8s.io",
 		"/run/containerd/io.containerd.runtime.v1.linux/k8s.io",
 		"/run/containerd/runc/k8s.io",
+		
+		// MicroK8s
 		"/var/snap/microk8s/common/run/containerd/runc/k8s.io",
 		"/var/snap/microk8s/common/run/containerd/io.containerd.runtime.v2.task/k8s.io",
+		
+		// Legacy/Other
 		"/run/runc",
 		"/run/docker/runtime-runc/moby",
 	}
 
 	RootlessDockerBase = "/run/user"
+	DockerConfigBase   = "/var/lib/docker/containers"
 
 	OutputDir    = "."
 	OutputFormat = "text"
