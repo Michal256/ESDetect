@@ -1,6 +1,7 @@
 # ESDetect
 
 The eBPF/SBOM Detect. It uses eBPF to detect the runtime events relevant to the SBOM format. Bridge the gap between static analysis and runtime reality by using eBPF to verify which SBOM dependencies are actually executed, enabling you to confidently identify unused packages and prioritize reachable vulnerabilities.
+After generating the output, use ESVerdict to perform end-goal correlation: https://github.com/Michal256/ESVerdict.
 
 ## Components
 
@@ -313,3 +314,4 @@ It is located at `/app/esdetect.sbom.json` inside the container.
 This project is licensed under the **Apache License 2.0**.
 
 See the `LICENSE` file for full details.
+
